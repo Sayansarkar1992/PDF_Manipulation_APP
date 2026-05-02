@@ -337,19 +337,31 @@ h3 {
   gap: 10px;
 }
 
+.field input,
 .field textarea {
   width: 100%;
   padding: 16px;
   border-radius: 20px;
   border: 1px solid rgba(39, 31, 16, 0.12);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.field input {
+  min-height: 52px;
+}
+
+.field textarea {
   resize: vertical;
   min-height: 126px;
-  background: rgba(255, 255, 255, 0.68);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: color-mix(in srgb, var(--muted) 82%, #2a2114 18%);
 }
 
 .field textarea::placeholder {
   white-space: pre-line;
-  color: color-mix(in srgb, var(--muted) 82%, #2a2114 18%);
   font-size: 0.82rem;
   line-height: 1.45;
 }

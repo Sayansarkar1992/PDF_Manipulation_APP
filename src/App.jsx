@@ -103,6 +103,7 @@ function App() {
   const [compressFile, setCompressFile] = useState(null);
   const [compressionMode, setCompressionMode] = useState("balanced");
   const [mergeFiles, setMergeFiles] = useState([]);
+  const [mergeOutputName, setMergeOutputName] = useState("merged-document.pdf");
   const [splitFile, setSplitFile] = useState(null);
   const [splitRanges, setSplitRanges] = useState("");
   const [splitPageCount, setSplitPageCount] = useState(null);
@@ -294,6 +295,8 @@ function App() {
       return;
     }
 
+    const outputName = formatPdfFileName(mergeOutputName);
+
     setBusy("merge", true);
     setStatus({ type: "working", message: "Rendering and merging selected PDFs." });
 
@@ -388,11 +391,11 @@ function App() {
       }
 
       const output = mergedDoc.output("blob");
-      triggerDownload(output, "merged-document.pdf");
+      triggerDownload(output, outputName);
 
       setStatus({
         type: "success",
-        message: `Merged ${mergeFiles.length} PDFs into ${pageCount} page${pageCount === 1 ? "" : "s"} and downloaded merged-document.pdf.`,
+        message: `Merged ${mergeFiles.length} PDFs into ${pageCount} page${pageCount === 1 ? "" : "s"} and downloaded ${outputName}.`,
       });
     } catch (error) {
       console.error(error);
@@ -486,7 +489,9 @@ function App() {
             {activeAction === "merge" ? (
               <MergePanel
                 files={mergeFiles}
+                outputName={mergeOutputName}
                 onFilesChange={handleMergeFiles}
+                onOutputNameChange={setMergeOutputName}
                 onMove={handleMoveMergeFile}
                 onRemove={handleRemoveMergeFile}
                 onRun={handleMerge}
@@ -566,7 +571,16 @@ function CompressPanel({ compressFile, compressionMode, onFileChange, onModeChan
   );
 }
 
-function MergePanel({ files, onFilesChange, onMove, onRemove, onRun, working }) {
+function MergePanel({
+  files,
+  outputName,
+  onFilesChange,
+  onOutputNameChange,
+  onMove,
+  onRemove,
+  onRun,
+  working,
+}) {
   return (
     <div className="panel">
       <div className="panel-header">
@@ -620,6 +634,16 @@ function MergePanel({ files, onFilesChange, onMove, onRemove, onRun, working }) 
           ))
         )}
       </div>
+
+      <label className="field">
+        <span>Merged file name</span>
+        <input
+          type="text"
+          value={outputName}
+          onChange={(event) => onOutputNameChange(event.target.value)}
+          placeholder="merged-document.pdf"
+        />
+      </label>
 
       <button type="button" className="primary-button" onClick={onRun} disabled={working}>
         {working ? "Merging..." : "Download merged PDF"}
@@ -747,6 +771,20 @@ function formatSize(size) {
   }
 
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatPdfFileName(name) {
+  const fallback = "merged-document.pdf";
+  const trimmed = name.trim();
+
+  if (!trimmed) {
+    return fallback;
+  }
+
+  const safeName = trimmed.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-").replace(/\s+/g, " ").trim();
+  const withExtension = /\.pdf$/i.test(safeName) ? safeName : `${safeName}.pdf`;
+
+  return withExtension === ".pdf" ? fallback : withExtension;
 }
 
 function getMergeRenderScale(viewport) {
