@@ -104,6 +104,8 @@ function App() {
   const [compressionMode, setCompressionMode] = useState("balanced");
   const [mergeFiles, setMergeFiles] = useState([]);
   const [mergeOutputName, setMergeOutputName] = useState("merged-document.pdf");
+  const [mergeDraftName, setMergeDraftName] = useState("merged-document.pdf");
+  const [mergeDialog, setMergeDialog] = useState(null);
   const [splitFile, setSplitFile] = useState(null);
   const [splitRanges, setSplitRanges] = useState("");
   const [splitPageCount, setSplitPageCount] = useState(null);
@@ -286,7 +288,7 @@ function App() {
     }
   };
 
-  const handleMerge = async () => {
+  const handleMergeDownloadRequest = () => {
     if (mergeFiles.length < 2) {
       setStatus({
         type: "error",
@@ -295,7 +297,35 @@ function App() {
       return;
     }
 
-    const outputName = formatPdfFileName(mergeOutputName);
+    setMergeDialog("choice");
+  };
+
+  const handleUseDefaultMergeName = () => {
+    setMergeDialog(null);
+    setMergeOutputName("merged-document.pdf");
+    handleMerge("merged-document.pdf");
+  };
+
+  const handleOpenMergeNameDialog = () => {
+    setMergeDraftName(mergeOutputName);
+    setMergeDialog("custom");
+  };
+
+  const handleSubmitMergeName = (event) => {
+    event.preventDefault();
+    const outputName = formatPdfFileName(mergeDraftName);
+
+    setMergeDialog(null);
+    setMergeOutputName(outputName);
+    handleMerge(outputName);
+  };
+
+  const handleCloseMergeDialog = () => {
+    setMergeDialog(null);
+  };
+
+  const handleMerge = async (requestedOutputName = "merged-document.pdf") => {
+    const outputName = formatPdfFileName(requestedOutputName);
 
     setBusy("merge", true);
     setStatus({ type: "working", message: "Rendering and merging selected PDFs." });
@@ -489,12 +519,10 @@ function App() {
             {activeAction === "merge" ? (
               <MergePanel
                 files={mergeFiles}
-                outputName={mergeOutputName}
                 onFilesChange={handleMergeFiles}
-                onOutputNameChange={setMergeOutputName}
                 onMove={handleMoveMergeFile}
                 onRemove={handleRemoveMergeFile}
-                onRun={handleMerge}
+                onRun={handleMergeDownloadRequest}
                 working={loading.merge}
               />
             ) : null}
@@ -515,6 +543,18 @@ function App() {
           </section>
         </div>
       </section>
+
+      {mergeDialog ? (
+        <MergeNameDialog
+          dialog={mergeDialog}
+          draftName={mergeDraftName}
+          onCancel={handleCloseMergeDialog}
+          onDefault={handleUseDefaultMergeName}
+          onDraftNameChange={setMergeDraftName}
+          onSubmit={handleSubmitMergeName}
+          onUpdateName={handleOpenMergeNameDialog}
+        />
+      ) : null}
     </main>
   );
 }
@@ -573,9 +613,7 @@ function CompressPanel({ compressFile, compressionMode, onFileChange, onModeChan
 
 function MergePanel({
   files,
-  outputName,
   onFilesChange,
-  onOutputNameChange,
   onMove,
   onRemove,
   onRun,
@@ -635,19 +673,78 @@ function MergePanel({
         )}
       </div>
 
-      <label className="field">
-        <span>Merged file name</span>
-        <input
-          type="text"
-          value={outputName}
-          onChange={(event) => onOutputNameChange(event.target.value)}
-          placeholder="merged-document.pdf"
-        />
-      </label>
-
       <button type="button" className="primary-button" onClick={onRun} disabled={working}>
         {working ? "Merging..." : "Download merged PDF"}
       </button>
+    </div>
+  );
+}
+
+function MergeNameDialog({
+  dialog,
+  draftName,
+  onCancel,
+  onDefault,
+  onDraftNameChange,
+  onSubmit,
+  onUpdateName,
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={dialog === "choice" ? "merge-name-choice-title" : "merge-name-custom-title"}
+      >
+        {dialog === "choice" ? (
+          <>
+            <div>
+              <p className="eyebrow">Merged PDF name</p>
+              <h3 id="merge-name-choice-title">Do you want default name or want to update file name</h3>
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={onDefault}>
+                Default name
+              </button>
+              <button type="button" className="primary-button compact" onClick={onUpdateName}>
+                Yes
+              </button>
+              <button type="button" className="secondary-button" onClick={onCancel}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <form className="modal-form" onSubmit={onSubmit}>
+            <div>
+              <p className="eyebrow">Update file name</p>
+              <h3 id="merge-name-custom-title">Enter merged PDF file name</h3>
+            </div>
+
+            <label className="field">
+              <span>File name</span>
+              <input
+                autoFocus
+                type="text"
+                value={draftName}
+                onChange={(event) => onDraftNameChange(event.target.value)}
+                placeholder="merged-document.pdf"
+              />
+            </label>
+
+            <div className="modal-actions">
+              <button type="submit" className="primary-button compact">
+                Submit
+              </button>
+              <button type="button" className="secondary-button" onClick={onCancel}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
     </div>
   );
 }
