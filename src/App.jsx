@@ -48,7 +48,9 @@ const compressionProfiles = [
   },
 ];
 
-const mergeRenderScale = 1.5;
+const preferredMergeRenderScale = 1.5;
+const maxMergeCanvasPixels = 12_000_000;
+const maxMergeCanvasSide = 4096;
 
 const initialState = {
   compress: false,
@@ -70,6 +72,7 @@ async function loadCompressionModules() {
       pdfjsModule.GlobalWorkerOptions.workerSrc = workerModule.default;
 
       return {
+        AnnotationMode: pdfjsModule.AnnotationMode,
         jsPDF: jspdfModule.jsPDF,
         getDocument: pdfjsModule.getDocument,
       };
@@ -295,7 +298,7 @@ function App() {
     setStatus({ type: "working", message: "Rendering and merging selected PDFs." });
 
     try {
-      const { jsPDF, getDocument } = await loadCompressionModules();
+      const { AnnotationMode, jsPDF, getDocument } = await loadCompressionModules();
       let mergedDoc;
       let pageCount = 0;
 
@@ -304,7 +307,11 @@ function App() {
 
         try {
           const bytes = await file.arrayBuffer();
-          sourcePdf = await getDocument({ data: bytes }).promise;
+          sourcePdf = await getDocument({
+            data: bytes,
+            enableXfa: true,
+            stopAtErrors: false,
+          }).promise;
         } catch (error) {
           throw new Error(`Could not read "${file.name}". ${formatPdfError(error)}`);
         }
@@ -313,7 +320,8 @@ function App() {
           try {
             const page = await sourcePdf.getPage(pageNumber);
             const outputViewport = page.getViewport({ scale: 1 });
-            const renderViewport = page.getViewport({ scale: mergeRenderScale });
+            const renderScale = getMergeRenderScale(outputViewport);
+            const renderViewport = page.getViewport({ scale: renderScale });
             const canvas = document.createElement("canvas");
             const context = canvas.getContext("2d", { alpha: false });
 
@@ -326,7 +334,12 @@ function App() {
             context.fillStyle = "#ffffff";
             context.fillRect(0, 0, canvas.width, canvas.height);
 
-            await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+            await page.render({
+              annotationMode: AnnotationMode?.ENABLE_FORMS ?? 2,
+              canvasContext: context,
+              intent: "display",
+              viewport: renderViewport,
+            }).promise;
 
             const pageWidth = outputViewport.width;
             const pageHeight = outputViewport.height;
@@ -346,7 +359,7 @@ function App() {
             }
 
             mergedDoc.addImage(
-              canvas.toDataURL("image/jpeg", 0.92),
+              canvas.toDataURL("image/jpeg", 0.95),
               "JPEG",
               0,
               0,
@@ -734,6 +747,17 @@ function formatSize(size) {
   }
 
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function getMergeRenderScale(viewport) {
+  const sideScale = Math.min(
+    preferredMergeRenderScale,
+    maxMergeCanvasSide / viewport.width,
+    maxMergeCanvasSide / viewport.height,
+  );
+  const pixelScale = Math.sqrt(maxMergeCanvasPixels / (viewport.width * viewport.height));
+
+  return Math.max(0.5, Math.min(preferredMergeRenderScale, sideScale, pixelScale));
 }
 
 function getFileKey(file) {
