@@ -48,6 +48,8 @@ const compressionProfiles = [
   },
 ];
 
+const mergeRenderScale = 1.5;
+
 const initialState = {
   compress: false,
   merge: false,
@@ -290,49 +292,89 @@ function App() {
     }
 
     setBusy("merge", true);
-    setStatus({ type: "working", message: "Merging selected PDFs." });
+    setStatus({ type: "working", message: "Rendering and merging selected PDFs." });
 
     try {
-      const PDFDocument = await loadPdfLib();
-      const mergedPdf = await PDFDocument.create();
-
+      const { jsPDF, getDocument } = await loadCompressionModules();
+      let mergedDoc;
       let pageCount = 0;
 
       for (const file of mergeFiles) {
-        let currentPdf;
+        let sourcePdf;
 
         try {
           const bytes = await file.arrayBuffer();
-          currentPdf = await PDFDocument.load(bytes, {
-            ignoreEncryption: true,
-            throwOnInvalidObject: false,
-            updateMetadata: false,
-          });
+          sourcePdf = await getDocument({ data: bytes }).promise;
         } catch (error) {
           throw new Error(`Could not read "${file.name}". ${formatPdfError(error)}`);
         }
 
-        let pages;
+        for (let pageNumber = 1; pageNumber <= sourcePdf.numPages; pageNumber += 1) {
+          try {
+            const page = await sourcePdf.getPage(pageNumber);
+            const outputViewport = page.getViewport({ scale: 1 });
+            const renderViewport = page.getViewport({ scale: mergeRenderScale });
+            const canvas = document.createElement("canvas");
+            const context = canvas.getContext("2d", { alpha: false });
 
-        try {
-          pages = await mergedPdf.copyPages(currentPdf, currentPdf.getPageIndices());
-        } catch (error) {
-          throw new Error(`Could not copy pages from "${file.name}". ${formatPdfError(error)}`);
+            if (!context) {
+              throw new Error("Canvas rendering is not available in this browser.");
+            }
+
+            canvas.width = Math.ceil(renderViewport.width);
+            canvas.height = Math.ceil(renderViewport.height);
+            context.fillStyle = "#ffffff";
+            context.fillRect(0, 0, canvas.width, canvas.height);
+
+            await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+
+            const pageWidth = outputViewport.width;
+            const pageHeight = outputViewport.height;
+            const orientation = pageWidth > pageHeight ? "landscape" : "portrait";
+            const pageFormat = [pageWidth, pageHeight];
+
+            if (!mergedDoc) {
+              mergedDoc = new jsPDF({
+                orientation,
+                unit: "pt",
+                format: pageFormat,
+                compress: true,
+              });
+            } else {
+              mergedDoc.addPage(pageFormat, orientation);
+              mergedDoc.setPage(pageCount + 1);
+            }
+
+            mergedDoc.addImage(
+              canvas.toDataURL("image/jpeg", 0.92),
+              "JPEG",
+              0,
+              0,
+              pageWidth,
+              pageHeight,
+              undefined,
+              "FAST",
+            );
+
+            page.cleanup();
+            canvas.width = 0;
+            canvas.height = 0;
+            pageCount += 1;
+          } catch (error) {
+            throw new Error(
+              `Could not render page ${pageNumber} from "${file.name}". ${formatPdfError(error)}`,
+            );
+          }
         }
 
-        pages.forEach((page) => mergedPdf.addPage(page));
-        pageCount += pages.length;
+        await sourcePdf.destroy();
       }
 
-      let mergedBytes;
-
-      try {
-        mergedBytes = await mergedPdf.save();
-      } catch (error) {
-        throw new Error(`Could not create the merged PDF. ${formatPdfError(error)}`);
+      if (!mergedDoc || pageCount === 0) {
+        throw new Error("Merge failed because no pages were found in the selected PDFs.");
       }
 
-      const output = new Blob([mergedBytes], { type: "application/pdf" });
+      const output = mergedDoc.output("blob");
       triggerDownload(output, "merged-document.pdf");
 
       setStatus({
