@@ -122,14 +122,23 @@ function App() {
     if (file) {
       resetStatus(`Selected ${file.name} for compression.`);
     }
+    event.target.value = "";
   };
 
   const handleMergeFiles = (event) => {
     const files = Array.from(event.target.files ?? []);
-    setMergeFiles(files);
-    if (files.length > 0) {
-      resetStatus(`${files.length} PDF file${files.length > 1 ? "s" : ""} ready to merge.`);
+    if (files.length === 0) {
+      return;
     }
+
+    setMergeFiles((current) => {
+      const existingFileKeys = new Set(current.map(getFileKey));
+      const nextFiles = files.filter((file) => !existingFileKeys.has(getFileKey(file)));
+
+      return [...current, ...nextFiles];
+    });
+    resetStatus(`Added ${files.length} PDF file${files.length > 1 ? "s" : ""} to the merge list.`);
+    event.target.value = "";
   };
 
   const handleMoveMergeFile = (index, direction) => {
@@ -146,7 +155,10 @@ function App() {
   };
 
   const handleRemoveMergeFile = (index) => {
-    setMergeFiles((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    setMergeFiles((current) => {
+      return current.filter((_, currentIndex) => currentIndex !== index);
+    });
+    resetStatus("Removed PDF from the merge list.");
   };
 
   const handleSplitFile = async (event) => {
@@ -172,6 +184,8 @@ function App() {
         type: "error",
         message: "This file could not be read as a PDF.",
       });
+    } finally {
+      event.target.value = "";
     }
   };
 
@@ -185,6 +199,8 @@ function App() {
     setStatus({ type: "working", message: "Compressing PDF pages. This can take a moment." });
 
     try {
+      const activeProfile =
+        compressionProfiles.find((profile) => profile.id === compressionMode) ?? compressionProfiles[1];
       const PDFDocument = await loadPdfLib();
       const { jsPDF, getDocument } = await loadCompressionModules();
       const bytes = await compressFile.arrayBuffer();
@@ -280,27 +296,54 @@ function App() {
       const PDFDocument = await loadPdfLib();
       const mergedPdf = await PDFDocument.create();
 
+      let pageCount = 0;
+
       for (const file of mergeFiles) {
-        const bytes = await file.arrayBuffer();
-        const currentPdf = await PDFDocument.load(bytes);
-        const pages = await mergedPdf.copyPages(currentPdf, currentPdf.getPageIndices());
+        let currentPdf;
+
+        try {
+          const bytes = await file.arrayBuffer();
+          currentPdf = await PDFDocument.load(bytes, {
+            ignoreEncryption: true,
+            throwOnInvalidObject: false,
+            updateMetadata: false,
+          });
+        } catch (error) {
+          throw new Error(`Could not read "${file.name}". ${formatPdfError(error)}`);
+        }
+
+        let pages;
+
+        try {
+          pages = await mergedPdf.copyPages(currentPdf, currentPdf.getPageIndices());
+        } catch (error) {
+          throw new Error(`Could not copy pages from "${file.name}". ${formatPdfError(error)}`);
+        }
 
         pages.forEach((page) => mergedPdf.addPage(page));
+        pageCount += pages.length;
       }
 
-      const mergedBytes = await mergedPdf.save();
+      let mergedBytes;
+
+      try {
+        mergedBytes = await mergedPdf.save();
+      } catch (error) {
+        throw new Error(`Could not create the merged PDF. ${formatPdfError(error)}`);
+      }
+
       const output = new Blob([mergedBytes], { type: "application/pdf" });
       triggerDownload(output, "merged-document.pdf");
 
       setStatus({
         type: "success",
-        message: "Merged PDF downloaded as merged-document.pdf.",
+        message: `Merged ${mergeFiles.length} PDFs into ${pageCount} page${pageCount === 1 ? "" : "s"} and downloaded merged-document.pdf.`,
       });
     } catch (error) {
       console.error(error);
       setStatus({
         type: "error",
-        message: "Merge failed. Confirm all selected files are valid PDFs.",
+        message: error.message || "Merge failed. Confirm all selected files are valid PDFs.",
       });
     } finally {
       setBusy("merge", false);
@@ -649,6 +692,32 @@ function formatSize(size) {
   }
 
   return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function getFileKey(file) {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function formatPdfError(error) {
+  const message = error instanceof Error ? error.message : "";
+
+  if (!message) {
+    return "The browser PDF parser rejected this file.";
+  }
+
+  if (/encrypted/i.test(message)) {
+    return "It appears to be encrypted or permission-protected.";
+  }
+
+  if (/password/i.test(message)) {
+    return "It appears to need a password before it can be merged.";
+  }
+
+  if (/invalid|parse|xref|trailer|object/i.test(message)) {
+    return "It opens in a reader, but its internal PDF structure is not accepted by this browser merger.";
+  }
+
+  return message;
 }
 
 function triggerDownload(blob, fileName) {
